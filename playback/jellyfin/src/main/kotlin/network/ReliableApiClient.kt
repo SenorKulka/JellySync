@@ -1,5 +1,7 @@
 package org.jellyfin.playback.jellyfin.network
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.ApiClientFactory
 import org.jellyfin.sdk.api.client.HttpClientOptions
@@ -36,7 +38,10 @@ class ReliableApiClient internal constructor(
 		pathParameters: Map<String, Any?>,
 		queryParameters: Map<String, Any?>,
 		requestBody: Any?,
-	): RawResponse = delegate.request(method, pathTemplate, pathParameters, queryParameters, requestBody)
+	): RawResponse = withContext(Dispatchers.IO) {
+		// SDK 1.8.12 reads the response body after suspension on the caller's dispatcher.
+		delegate.request(method, pathTemplate, pathParameters, queryParameters, requestBody)
+	}
 }
 
 class ReliableApiClientFactory(private val factory: OkHttpFactory) : ApiClientFactory {
