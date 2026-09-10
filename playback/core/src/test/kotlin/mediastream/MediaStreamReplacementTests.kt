@@ -42,7 +42,11 @@ class MediaStreamReplacementTests : FunSpec({
 			val newPlaying = CompletableDeferred<Unit>()
 			val fallbackAttempts = mutableListOf<QueueEntry>()
 			val resolver = object : MediaStreamResolver {
-				override suspend fun getStream(queueEntry: QueueEntry): PlayableMediaStream {
+				override suspend fun getStream(
+					queueEntry: QueueEntry,
+					selection: MediaStreamSelection?,
+					startPosition: Duration,
+				): PlayableMediaStream {
 					if (queueEntry === oldEntry) {
 						oldStarted.complete(Unit)
 						try {
@@ -57,7 +61,11 @@ class MediaStreamReplacementTests : FunSpec({
 				}
 			}
 			val fallback = object : MediaStreamResolver {
-				override suspend fun getStream(queueEntry: QueueEntry): PlayableMediaStream? {
+				override suspend fun getStream(
+					queueEntry: QueueEntry,
+					selection: MediaStreamSelection?,
+					startPosition: Duration,
+				): PlayableMediaStream? {
 					fallbackAttempts.add(queueEntry)
 					return null
 				}

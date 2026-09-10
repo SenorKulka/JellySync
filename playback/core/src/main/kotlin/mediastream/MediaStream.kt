@@ -1,6 +1,8 @@
 package org.jellyfin.playback.core.mediastream
 
 import org.jellyfin.playback.core.queue.QueueEntry
+import org.jellyfin.playback.core.model.PlayerTracks
+import kotlin.time.Duration
 
 interface MediaStream {
 	val identifier: String
@@ -35,6 +37,10 @@ data class PlayableMediaStream(
 	override val tracks: Collection<MediaStreamTrack>,
 	val queueEntry: QueueEntry,
 	val url: String,
+	val trackSelection: PlayerTracks = PlayerTracks(),
+	val externalSubtitles: List<ExternalSubtitle> = emptyList(),
+	val startPosition: Duration = Duration.ZERO,
+	val selection: MediaStreamSelection? = null,
 ) : MediaStream
 
 data class MediaStreamContainer(

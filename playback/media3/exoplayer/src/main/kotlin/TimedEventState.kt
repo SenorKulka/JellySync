@@ -24,6 +24,7 @@ class TimedEventState {
 	)
 
 	private val _currentEvents = mutableListOf<Pair<TimedEvent, List<PlayerMessage>>>()
+	private var streamStartPosition = Duration.ZERO
 
 	private val messageHandler = object : PlayerMessage.Target {
 		override fun handleMessage(messageType: Int, message: Any?) {
@@ -36,8 +37,13 @@ class TimedEventState {
 		}
 	}
 
-	fun setTimedEvents(exoPlayer: ExoPlayer, timedEvents: List<TimedEvent>) {
-		val mediaDuration = exoPlayer.duration.takeUnless { it == C.TIME_UNSET }?.milliseconds
+	fun setTimedEvents(exoPlayer: ExoPlayer, timedEvents: List<TimedEvent>, startPosition: Duration = Duration.ZERO) {
+		if (streamStartPosition != startPosition) {
+			_currentEvents.flatMap { it.second }.forEach(PlayerMessage::cancel)
+			_currentEvents.clear()
+			streamStartPosition = startPosition
+		}
+		val mediaDuration = exoPlayer.duration.takeUnless { it == C.TIME_UNSET }?.milliseconds?.plus(startPosition)
 
 		// Removed events that no longer exist
 		val currentEventsIterator = _currentEvents.iterator()
@@ -119,7 +125,7 @@ class TimedEventState {
 	) = exoPlayer.createMessage(messageHandler).apply {
 		setType(type)
 		// Messages at position 0 will never be invoked by ExoPlayer
-		setPosition(position.inWholeMilliseconds.coerceAtLeast(1))
+		setPosition((position - streamStartPosition).inWholeMilliseconds.coerceAtLeast(1))
 		setPayload(
 			MessagePayload(
 				timedEvent = timedEvent,

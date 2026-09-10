@@ -25,6 +25,7 @@ interface PlayerBackend {
 
 	fun setListener(eventListener: PlayerBackendEventListener?)
 	fun getPositionInfo(): PositionInfo
+	val seekGeneration: Long
 
 	// Mutation
 
@@ -39,7 +40,9 @@ interface PlayerBackend {
 	fun setScrubbing(scrubbing: Boolean)
 
 	fun setSpeed(speed: Float)
+	fun selectAudioTrack(id: String)
+	fun selectSubtitleTrack(id: String?)
+	fun cancelStreamReload(entry: QueueEntry)
 
 	fun setTimedEvents(timedEvents: List<TimedEvent>)
 }
-

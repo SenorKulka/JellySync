@@ -7,6 +7,7 @@ import org.jellyfin.playback.core.backend.BackendService
 import org.jellyfin.playback.core.backend.PlayerBackendEventListener
 import org.jellyfin.playback.core.mediastream.PlayableMediaStream
 import org.jellyfin.playback.core.model.PlayState
+import org.jellyfin.playback.core.model.PlayerTracks
 import org.jellyfin.playback.core.model.PlaybackOrder
 import org.jellyfin.playback.core.model.PositionInfo
 import org.jellyfin.playback.core.model.RepeatMode
@@ -22,6 +23,11 @@ interface PlayerState {
 	val playbackOrder: StateFlow<PlaybackOrder>
 	val repeatMode: StateFlow<RepeatMode>
 	val scrubbing: StateFlow<Boolean>
+	val tracks: StateFlow<PlayerTracks>
+
+	// Language selections belong to this player, including during synchronized playback.
+	fun selectAudioTrack(id: String)
+	fun selectSubtitleTrack(id: String?)
 
 	/**
 	 * The position information for the currently playing item or [PositionInfo.EMPTY]. This
@@ -80,12 +86,18 @@ class MutablePlayerState(
 
 	private val _scrubbing = MutableStateFlow(false)
 	override val scrubbing: StateFlow<Boolean> get() = _scrubbing.asStateFlow()
+	private val _tracks = MutableStateFlow(PlayerTracks())
+	override val tracks: StateFlow<PlayerTracks> = _tracks.asStateFlow()
 
 	override val positionInfo: PositionInfo
 		get() = backendService.backend?.getPositionInfo() ?: PositionInfo.EMPTY
 
 	init {
 		backendService.addListener(object : PlayerBackendEventListener() {
+			override fun onTracksChanged(tracks: PlayerTracks) {
+				_tracks.value = tracks
+			}
+
 			override fun onPlayStateChange(state: PlayState) {
 				_playState.value = state
 			}
@@ -155,6 +167,14 @@ class MutablePlayerState(
 		if (commandHandler(PlayerCommand.Speed(speed))) return
 		_speed.value = speed
 		backendService.backend?.setSpeed(speed)
+	}
+
+	override fun selectAudioTrack(id: String) {
+		backendService.backend?.selectAudioTrack(id)
+	}
+
+	override fun selectSubtitleTrack(id: String?) {
+		backendService.backend?.selectSubtitleTrack(id)
 	}
 
 	override fun setPlaybackOrder(order: PlaybackOrder) {
