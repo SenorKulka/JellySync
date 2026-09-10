@@ -60,14 +60,14 @@ internal fun MediaInfo.getExternalSubtitles(
 	startPosition: Duration,
 ): List<ExternalSubtitle> = mediaSource.mediaStreams.orEmpty()
 	.filter { it.type == MediaStreamType.SUBTITLE }
-	.filter { it.deliveryMethod == SubtitleDeliveryMethod.EXTERNAL || it.isExternal }
+	.filter { it.deliveryMethod == SubtitleDeliveryMethod.EXTERNAL || it.isExternal || it.extractEmbeddedText() }
 	.filterNot { it.deliveryMethod == SubtitleDeliveryMethod.ENCODE || it.deliveryMethod == SubtitleDeliveryMethod.DROP }
 	.mapNotNull { stream ->
 		val sourceId = mediaSource.id ?: return@mapNotNull null
 		val deliveryUrl = stream.deliveryUrl
 		val format = deliveryUrl?.substringBefore('?')?.substringAfterLast('.')?.lowercase()
 		val mimeType = subtitleMimeType(format) ?: subtitleMimeType(stream.codec) ?: return@mapNotNull null
-		val useDeliveryUrl = deliveryUrl != null && startPosition == Duration.ZERO
+		val useDeliveryUrl = deliveryUrl != null && startPosition == Duration.ZERO && !stream.extractEmbeddedText()
 		val url = if (useDeliveryUrl) {
 			if (requireNotNull(deliveryUrl).startsWith("https://") || deliveryUrl.startsWith("http://")) deliveryUrl
 			else api.createUrl(deliveryUrl, ignorePathParameters = true)
@@ -88,6 +88,11 @@ internal fun MediaInfo.getExternalSubtitles(
 			forced = stream.isForced,
 		)
 	}
+
+// Extract plain text so switching languages also displays a cue that started before the current position.
+// Bitmap captions and styled ASS/SSA retain their native renderer or server burn-in path.
+private fun MediaStream.extractEmbeddedText() = deliveryMethod == SubtitleDeliveryMethod.EMBED &&
+	codec?.lowercase() in setOf("srt", "subrip", "vtt", "webvtt", "ttml")
 
 private fun subtitleMimeType(codec: String?) = when (codec?.lowercase()) {
 	"srt", "subrip" -> "application/x-subrip"

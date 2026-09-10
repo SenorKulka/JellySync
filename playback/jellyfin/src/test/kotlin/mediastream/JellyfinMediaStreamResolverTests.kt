@@ -8,6 +8,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
+import io.mockk.verify
 import org.jellyfin.playback.core.mediastream.MediaConversionMethod
 import org.jellyfin.playback.core.mediastream.MediaStreamSelection
 import org.jellyfin.playback.core.queue.QueueEntry
@@ -42,10 +43,36 @@ class JellyfinMediaStreamResolverTests : FunSpec({
 		result.queueEntry shouldBe fixture.entry
 		result.trackSelection.audio.map { it.id to it.embeddedIndex } shouldBe listOf("2" to 0, "3" to 1)
 		result.trackSelection.selectedAudioId shouldBe "2"
-		result.trackSelection.subtitles.map { it.id to it.embeddedIndex } shouldBe listOf("0" to null, "4" to 0)
+		result.trackSelection.subtitles.map { it.id to it.embeddedIndex } shouldBe listOf("0" to null, "4" to null)
 		result.trackSelection.selectedSubtitleId shouldBe "4"
-		result.externalSubtitles.single().mimeType shouldBe "text/vtt"
-		result.externalSubtitles.single().url shouldBe "https://server/jellyfin/subtitles/0.vtt"
+		result.externalSubtitles.first { it.id == "0" }.mimeType shouldBe "text/vtt"
+		result.externalSubtitles.first { it.id == "0" }.url shouldBe "https://server/jellyfin/subtitles/0.vtt"
+	}
+
+	test("embedded plain text is extracted as VTT with the same server track ID") {
+		val fixture = ResolverFixture()
+		val result = fixture.resolver.getStream(fixture.entry).shouldNotBeNull()
+		val subtitle = result.externalSubtitles.first { it.id == "4" }
+		subtitle.mimeType shouldBe "text/vtt"
+		subtitle.url shouldBe "https://server/jellyfin/subtitle-at-0.vtt"
+		verify { fixture.subtitleApi.getSubtitleUrl(
+			routeItemId = fixture.entry.baseItem.shouldNotBeNull().id, routeMediaSourceId = "source",
+			routeIndex = 4, routeFormat = "vtt", startPositionTicks = 0,
+		) }
+		result.trackSelection.subtitles.first { it.id == "4" }.requiresReload shouldBe false
+	}
+
+	test("bitmap and styled embedded subtitles retain the native renderer") {
+		for (codec in listOf("pgssub", "ass")) {
+			val mediaInfo = MediaInfo("play", source(true, listOf(
+				stream(4, MediaStreamType.SUBTITLE, "eng").copy(codec = codec, deliveryMethod = SubtitleDeliveryMethod.EMBED),
+			)))
+			mediaInfo.getExternalSubtitles(mockk(), UUID.randomUUID(), Duration.ZERO) shouldBe emptyList()
+			val track = mediaInfo.getTrackSelection(MediaConversionMethod.None, null, emptyList()).subtitles.single()
+			track.id shouldBe "4"
+			track.embeddedIndex shouldBe 0
+			track.requiresReload shouldBe false
+		}
 	}
 
 	test("an explicit off selection sends minus one while initial resolution keeps server defaults") {
@@ -73,14 +100,14 @@ class JellyfinMediaStreamResolverTests : FunSpec({
 		fixture.request.captured.maxStreamingBitrate shouldBe 4_000_000
 		fixture.request.captured.mediaSourceId shouldBe "source"
 		fixture.entry.mediaSourceId shouldBe "source"
-		result.externalSubtitles.single().url shouldBe "https://server/jellyfin/subtitles/0.vtt"
+		result.externalSubtitles.first { it.id == "0" }.url shouldBe "https://server/jellyfin/subtitles/0.vtt"
 	}
 
 	test("direct play always retains a full-title timeline even when reloaded after a seek") {
 		val fixture = ResolverFixture()
 		val result = fixture.resolver.getStream(fixture.entry, MediaStreamSelection("3", "0"), 45.seconds).shouldNotBeNull()
 		result.startPosition shouldBe Duration.ZERO
-		result.externalSubtitles.single().url shouldBe "https://server/jellyfin/subtitles/0.vtt"
+		result.externalSubtitles.first { it.id == "0" }.url shouldBe "https://server/jellyfin/subtitles/0.vtt"
 	}
 
 	test("burned subtitles require a stream reload and are not attached as sidecar text") {
@@ -92,7 +119,7 @@ class JellyfinMediaStreamResolverTests : FunSpec({
 
 	test("an absolute external delivery URL is not appended to the server base path") {
 		val fixture = ResolverFixture(deliveryUrl = "https://subtitles.example/captions.vtt")
-		fixture.resolver.getStream(fixture.entry).shouldNotBeNull().externalSubtitles.single().url shouldBe
+		fixture.resolver.getStream(fixture.entry).shouldNotBeNull().externalSubtitles.first { it.id == "0" }.url shouldBe
 			"https://subtitles.example/captions.vtt"
 	}
 

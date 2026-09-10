@@ -2,10 +2,10 @@ package org.jellyfin.playback.media3.exoplayer
 
 import android.app.ActivityManager
 import android.content.Context
-import android.net.Uri
 import android.view.ViewGroup
 import androidx.annotation.OptIn
 import androidx.core.content.getSystemService
+import androidx.core.net.toUri
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -277,7 +277,7 @@ class ExoPlayerBackend(
 			setMediaId(stream.hashCode().toString())
 			setUri(stream.url)
 			setSubtitleConfigurations(stream.externalSubtitles.map { subtitle ->
-				MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitle.url))
+				MediaItem.SubtitleConfiguration.Builder(subtitle.url.toUri())
 					.setId("$EXTERNAL_SUBTITLE_PREFIX${subtitle.id}")
 					.setMimeType(subtitle.mimeType)
 					.setLanguage(subtitle.language)
@@ -348,7 +348,7 @@ class ExoPlayerBackend(
 		)
 
 		// Enjoy!
-		Timber.i("Playing ${item.mediaStream?.url}")
+		Timber.i("Playing stream %s using %s", stream.identifier, stream.conversionMethod)
 		if (item.initialPlayback.playWhenReady) exoPlayer.play()
 		else exoPlayer.pause()
 		// Already prepared entries need a ready notification even without a state transition.
