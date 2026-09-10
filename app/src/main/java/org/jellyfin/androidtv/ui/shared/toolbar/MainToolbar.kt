@@ -4,6 +4,7 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +44,8 @@ import org.jellyfin.androidtv.ui.playback.MediaManager
 import org.jellyfin.androidtv.ui.settings.compat.SettingsViewModel
 import org.jellyfin.androidtv.ui.syncplay.SyncPlayButton
 import org.jellyfin.androidtv.ui.syncplay.SyncPlayDialog
+import org.jellyfin.androidtv.ui.syncplay.SyncPlayPlayerMode
+import org.jellyfin.androidtv.ui.syncplay.SyncPlayPlayerState
 import org.jellyfin.androidtv.util.apiclient.getUrl
 import org.jellyfin.androidtv.util.apiclient.primaryImage
 import org.jellyfin.sdk.api.client.ApiClient
@@ -86,6 +89,10 @@ private fun MainToolbar(
 	val settingsViewModel = koinActivityViewModel<SettingsViewModel>()
 	val scope = rememberCoroutineScope()
 	var showSyncPlay by remember { mutableStateOf(false) }
+	val playerMode by koinInject<SyncPlayPlayerState>().mode.collectAsState()
+	LaunchedEffect(playerMode) {
+		if (playerMode == SyncPlayPlayerMode.FULLSCREEN) showSyncPlay = false
+	}
 	val activeButtonColors = ButtonDefaults.colors(
 		containerColor = JellyfinTheme.colorScheme.buttonActive,
 		contentColor = JellyfinTheme.colorScheme.onButtonActive,

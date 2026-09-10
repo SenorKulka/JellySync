@@ -6,19 +6,16 @@ import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import androidx.fragment.compose.content
 import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.jellyfin.androidtv.ui.base.BaseScreen
 import org.jellyfin.androidtv.ui.playback.VideoQueueManager
 import org.jellyfin.androidtv.ui.playback.rewrite.RewriteMediaManager
+import org.jellyfin.androidtv.ui.syncplay.SyncPlayPlayerMode
+import org.jellyfin.androidtv.ui.syncplay.SyncPlayPlayerState
 import org.jellyfin.playback.core.PlaybackManager
 import org.jellyfin.playback.core.queue.queue
-import org.jellyfin.playback.jellyfin.queue.baseItem
 import org.jellyfin.playback.jellyfin.syncplay.SyncPlayService
 import org.jellyfin.sdk.api.client.ApiClient
-import org.jellyfin.sdk.model.api.MediaType
 import org.koin.android.ext.android.inject
 import timber.log.Timber
 import kotlin.time.Duration.Companion.milliseconds
@@ -31,6 +28,7 @@ class VideoPlayerFragment : Fragment() {
 	private val videoQueueManager by inject<VideoQueueManager>()
 	private val playbackManager by inject<PlaybackManager>()
 	private val api by inject<ApiClient>()
+	private val syncPlayPlayerState by inject<SyncPlayPlayerState>()
 	private val syncPlay get() = playbackManager.getService<SyncPlayService>()
 
 	override fun onCreate(savedInstanceState: Bundle?) {
@@ -81,18 +79,9 @@ class VideoPlayerFragment : Fragment() {
 	override fun onStop() {
 		super.onStop()
 
-		val service = syncPlay
-		if (service?.active == true) {
-			// Switching to a group audio item moves to Now Playing without ending the group.
-			val entry = playbackManager.queue.entry.value
-			if (service.isGroupEntry(entry) && entry?.baseItem?.mediaType == MediaType.AUDIO) return
-			if (activity?.isChangingConfigurations == true) return
-			lifecycleScope.launch(start = CoroutineStart.UNDISPATCHED) {
-				// Reset locally before the leave request; lifecycle changes must not pause or stop the group.
-				withContext(NonCancellable) { service.endSession() }
-			}
-			return
-		}
+		// Party playback belongs to the activity's persistent player host. A page being
+		// detached while browsing must not stop it or send a leave request to the group.
+		if (syncPlay?.active == true || syncPlayPlayerState.mode.value != SyncPlayPlayerMode.HIDDEN) return
 
 		playbackManager.state.stop()
 	}

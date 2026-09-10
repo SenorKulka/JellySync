@@ -10,6 +10,8 @@ import org.jellyfin.androidtv.preference.UserPreferences
 import org.jellyfin.androidtv.ui.navigation.ActivityDestinations
 import org.jellyfin.androidtv.ui.navigation.Destinations
 import org.jellyfin.androidtv.ui.navigation.NavigationRepository
+import org.jellyfin.androidtv.ui.syncplay.SyncPlayPlayerMode
+import org.jellyfin.androidtv.ui.syncplay.SyncPlayPlayerState
 import org.jellyfin.playback.core.PlaybackManager
 import org.jellyfin.playback.jellyfin.syncplay.SyncPlayService
 import org.jellyfin.sdk.model.api.BaseItemDto
@@ -27,6 +29,7 @@ class PlaybackLauncher(
 	private val navigationRepository: NavigationRepository,
 	private val userPreferences: UserPreferences,
 	private val playbackManager: PlaybackManager,
+	private val syncPlayPlayerState: SyncPlayPlayerState,
 ) {
 	private val BaseItemDto.supportsExternalPlayer
 		get() = when (type) {
@@ -62,8 +65,18 @@ class PlaybackLauncher(
 				?.lifecycleScope ?: ProcessLifecycleOwner.get().lifecycleScope
 			scope.launch {
 				syncPlay.playItems(groupItems.map { it.id }, itemsPosition, position?.milliseconds ?: Duration.ZERO)
+				if (syncPlay.group.value != null && syncPlay.error.value == null &&
+					groupItems.getOrNull(itemsPosition)?.mediaType == MediaType.VIDEO
+				) syncPlayPlayerState.show()
 			}
 			return
+		}
+
+		// A video retained after explicitly leaving a party is local playback. A new
+		// selection must close that host before launching the user's preferred player.
+		if (syncPlayPlayerState.mode.value != SyncPlayPlayerMode.HIDDEN) {
+			syncPlayPlayerState.hide()
+			playbackManager.state.stop()
 		}
 
 		val isAudio = items.any { it.mediaType == MediaType.AUDIO }

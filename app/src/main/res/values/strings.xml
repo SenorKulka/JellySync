@@ -691,6 +691,7 @@
     <string name="syncplay">SyncPlay</string>
     <string name="syncplay_active">SyncPlay: %1$s</string>
     <string name="syncplay_description">Watch together with other Jellyfin clients. Group videos use the integrated player.</string>
+    <string name="syncplay_restore_player">Return to full screen</string>
     <string name="syncplay_available_groups">Available groups</string>
     <string name="syncplay_no_groups">No groups available. Create a group to start watching together.</string>
     <string name="syncplay_refresh">Refresh</string>

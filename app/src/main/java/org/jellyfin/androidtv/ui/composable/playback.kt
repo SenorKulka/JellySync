@@ -12,6 +12,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import org.jellyfin.playback.core.PlaybackManager
 import org.jellyfin.playback.core.model.PlayState
@@ -34,15 +35,13 @@ fun rememberPlayerPositionInfo(
 	playbackManager: PlaybackManager = koinInject(),
 	precision: Duration = 1.seconds
 ): MutableState<PositionInfo> {
-	val playState by playbackManager.state.playState.collectAsState()
-	val playing = playState == PlayState.PLAYING
+	val positionInfo = remember(playbackManager) { mutableStateOf(playbackManager.state.positionInfo) }
 
-	val positionInfo = remember { mutableStateOf(playbackManager.state.positionInfo) }
+	LaunchedEffect(playbackManager, precision) {
+		val precisionMs = precision.inWholeMilliseconds.coerceAtLeast(1)
 
-	LaunchedEffect(playing, precision) {
-		val precisionMs = precision.inWholeMilliseconds
-
-		while (playing) {
+		// A paused player can still seek, buffer, or select a new item remotely.
+		while (isActive) {
 			positionInfo.value = playbackManager.state.positionInfo
 
 			delay(precisionMs - (positionInfo.value.active.inWholeMilliseconds % precisionMs))
@@ -57,13 +56,12 @@ fun rememberPlayerProgress(
 	playbackManager: PlaybackManager = koinInject(),
 ): State<Float> {
 	val playState by playbackManager.state.playState.collectAsState()
-	val active = playbackManager.state.positionInfo.active
-	val duration = playbackManager.state.positionInfo.duration
+	val positionInfo by rememberPlayerPositionInfo(playbackManager)
 
 	return rememberPlayerProgress(
 		playing = playState == PlayState.PLAYING,
-		active = active,
-		duration = duration,
+		active = positionInfo.active,
+		duration = positionInfo.duration,
 	)
 }
 
@@ -75,7 +73,7 @@ fun rememberPlayerProgress(
 ): State<Float> {
 	val animatable = remember { Animatable(0f, 0f) }
 
-	LaunchedEffect(playing, duration) {
+	LaunchedEffect(playing, active, duration) {
 		val activeMs = active.inWholeMilliseconds.toFloat()
 		val durationMs = duration.inWholeMilliseconds.toFloat()
 

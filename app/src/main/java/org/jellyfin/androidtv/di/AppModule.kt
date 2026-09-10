@@ -54,6 +54,7 @@ import org.jellyfin.androidtv.ui.settings.screen.library.SettingsLibrariesScreen
 import org.jellyfin.androidtv.ui.startup.ServerAddViewModel
 import org.jellyfin.androidtv.ui.startup.StartupViewModel
 import org.jellyfin.androidtv.ui.startup.UserLoginViewModel
+import org.jellyfin.androidtv.ui.syncplay.SyncPlayPlayerState
 import org.jellyfin.androidtv.util.AndroidVersion
 import org.jellyfin.androidtv.util.KeyProcessor
 import org.jellyfin.androidtv.util.MarkdownRenderer
@@ -141,6 +142,7 @@ val appModule = module {
 	single { DataRefreshService() }
 	single { PlaybackControllerContainer() }
 	single { InteractionTrackerViewModel(get(), get()) }
+	single { SyncPlayPlayerState() }
 
 	single<UserRepository> { UserRepositoryImpl() }
 	single<UserViewsRepository> { UserViewsRepositoryImpl(get()) }

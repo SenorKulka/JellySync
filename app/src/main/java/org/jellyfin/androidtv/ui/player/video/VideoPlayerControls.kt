@@ -43,6 +43,7 @@ import org.jellyfin.androidtv.ui.syncplay.SyncPlayButton
 import org.jellyfin.playback.core.PlaybackManager
 import org.jellyfin.playback.core.model.PlayState
 import org.jellyfin.playback.core.queue.queue
+import org.jellyfin.playback.jellyfin.mediastream.JellyfinTrackSelectionService
 import org.koin.compose.koinInject
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -51,10 +52,12 @@ import kotlin.time.DurationUnit
 @Composable
 fun VideoPlayerControls(
 	playbackManager: PlaybackManager = koinInject(),
-	onPlaybackInfoClick: () -> Unit = {},
-	onSyncPlayClick: () -> Unit = {},
+	actions: VideoPlayerControlActions = VideoPlayerControlActions(),
+	hasChapters: Boolean = false,
 ) {
 	val playState by playbackManager.state.playState.collectAsState()
+	val tracks by playbackManager.state.tracks.collectAsState()
+	val changingStream = playbackManager.getService<JellyfinTrackSelectionService>()?.busy?.collectAsState()?.value == true
 
 	Column(
 		verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
@@ -71,12 +74,19 @@ fun VideoPlayerControls(
 
 			Spacer(Modifier.weight(1f))
 
-			PlaybackInfoButton(onClick = onPlaybackInfoClick)
-			SyncPlayButton(onClick = onSyncPlayClick, playbackManager = playbackManager)
+			if (tracks.audio.isNotEmpty()) {
+				PlayerOptionButton(R.drawable.ic_select_audio, R.string.lbl_audio_track, actions.onAudioClick, enabled = !changingStream)
+			}
+			PlayerOptionButton(R.drawable.ic_select_subtitle, R.string.lbl_subtitle_track, actions.onSubtitlesClick, enabled = !changingStream)
+			PlaybackInfoButton(onClick = actions.onPlaybackInfoClick)
+			SyncPlayButton(onClick = actions.onSyncPlayClick, playbackManager = playbackManager)
 
 			MoreOptionsButton {
 				PreviousEntryButton(playbackManager)
 				NextEntryButton(playbackManager)
+				if (hasChapters) PlayerOptionButton(R.drawable.ic_select_chapter, R.string.lbl_chapters, actions.onChaptersClick)
+				PlayerOptionButton(R.drawable.ic_aspect_ratio, R.string.lbl_zoom, actions.onScaleClick)
+				PlayerOptionButton(R.drawable.ic_select_quality, R.string.lbl_quality_profile, actions.onQualityClick, enabled = !changingStream)
 			}
 		}
 
@@ -94,6 +104,7 @@ fun VideoPlayerControls(
 				.focusGroup()
 		) {
 			Spacer(Modifier.weight(1f))
+			if (changingStream) Text(stringResource(R.string.loading))
 			PositionText(playbackManager)
 		}
 	}

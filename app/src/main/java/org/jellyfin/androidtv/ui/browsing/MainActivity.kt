@@ -1,11 +1,18 @@
 package org.jellyfin.androidtv.ui.browsing
 
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
@@ -35,10 +42,15 @@ import org.jellyfin.androidtv.ui.composable.compat.AppNavigationHost
 import org.jellyfin.androidtv.ui.navigation.Destinations
 import org.jellyfin.androidtv.ui.navigation.NavigationRepository
 import org.jellyfin.androidtv.ui.playback.AudioNowPlayingFragment
+import org.jellyfin.androidtv.ui.playback.CustomPlaybackOverlayFragment
 import org.jellyfin.androidtv.ui.player.video.VideoPlayerFragment
 import org.jellyfin.androidtv.ui.screensaver.InAppScreensaver
 import org.jellyfin.androidtv.ui.settings.compat.MainActivitySettings
 import org.jellyfin.androidtv.ui.startup.StartupActivity
+import org.jellyfin.androidtv.ui.syncplay.SyncPlayBackAction
+import org.jellyfin.androidtv.ui.syncplay.SyncPlayPlayerHost
+import org.jellyfin.androidtv.ui.syncplay.SyncPlayPlayerMode
+import org.jellyfin.androidtv.ui.syncplay.SyncPlayPlayerState
 import org.jellyfin.androidtv.util.applyTheme
 import org.jellyfin.playback.core.PlaybackManager
 import org.jellyfin.playback.core.queue.queue
@@ -48,6 +60,7 @@ import org.jellyfin.sdk.model.api.MediaType
 import org.koin.android.ext.android.inject
 import org.koin.androidx.viewmodel.ext.android.viewModel
 import timber.log.Timber
+import java.lang.ref.WeakReference
 
 class MainActivity : FragmentActivity() {
 	private val navigationRepository by inject<NavigationRepository>()
@@ -56,6 +69,8 @@ class MainActivity : FragmentActivity() {
 	private val interactionTrackerViewModel by viewModel<InteractionTrackerViewModel>()
 	private val workManager by inject<WorkManager>()
 	private val playbackManager by inject<PlaybackManager>()
+	private val syncPlayPlayerState by inject<SyncPlayPlayerState>()
+	private var browsingFocus = WeakReference<View>(null)
 
 	override fun onCreate(savedInstanceState: Bundle?) {
 		applyTheme()
@@ -92,9 +107,22 @@ class MainActivity : FragmentActivity() {
 					interactionTracker = { interactionTrackerViewModel.notifyInteraction(false, userInitiated = true) }
 				) {
 					AppBackground()
-					AppNavigationHost(
-						navigationRepository = navigationRepository,
-					)
+					val playerMode by syncPlayPlayerState.mode.collectAsState()
+					Box(Modifier.fillMaxSize()) {
+						AppNavigationHost(
+							navigationRepository = navigationRepository,
+							interactive = playerMode != SyncPlayPlayerMode.FULLSCREEN,
+						)
+						SyncPlayPlayerHost(
+							state = syncPlayPlayerState,
+							playbackManager = playbackManager,
+							onBrowseFocusRequested = ::restoreBrowsingFocus,
+						)
+					}
+					BackHandler(enabled = playerMode != SyncPlayPlayerMode.HIDDEN) {
+						if (playerMode == SyncPlayPlayerMode.MINIMIZED) rememberBrowsingFocus()
+						if (syncPlayPlayerState.handleBack() == SyncPlayBackAction.EXIT) finish()
+					}
 					InAppScreensaver()
 					MainActivitySettings()
 				}
@@ -105,22 +133,61 @@ class MainActivity : FragmentActivity() {
 	private fun observeSyncPlayNavigation() {
 		val service = playbackManager.getService<SyncPlayService>() ?: return
 		combine(service.group, playbackManager.queue.entry) { group, entry ->
-			if (group != null && service.isGroupEntry(entry)) group.groupId to entry?.baseItem?.mediaType
-			else null
+			Triple(group?.groupId, entry?.baseItem?.mediaType, service.isGroupEntry(entry))
 		}
 			.distinctUntilChanged()
 			.flowWithLifecycle(lifecycle, Lifecycle.State.RESUMED)
 			.onEach { playback ->
-				val destination = when (playback?.second) {
-					MediaType.VIDEO -> Destinations.videoPlayerNew(null)
-					MediaType.AUDIO -> Destinations.nowPlaying
-					else -> return@onEach
+				if (playback.first == null) {
+					// Explicitly leaving a group can retain the current video as local playback.
+					// Logout, disconnect, and app exit clear the queue and dismiss the host.
+					if (playback.second != MediaType.VIDEO) syncPlayPlayerState.hide()
+					return@onEach
 				}
-				val currentFragment = supportFragmentManager.findFragmentById(R.id.container)
-				if (currentFragment?.let { destination.fragment.isInstance(it) } == true) return@onEach
-				val switchingPlayer = currentFragment is VideoPlayerFragment || currentFragment is AudioNowPlayingFragment
-				navigationRepository.navigate(destination, replace = switchingPlayer)
+				if (!playback.third) {
+					// Keep the current viewport while the next video's metadata is loading.
+					if (playback.second != MediaType.VIDEO) syncPlayPlayerState.hide()
+					return@onEach
+				}
+				when (playback.second) {
+					MediaType.VIDEO -> {
+						if (syncPlayPlayerState.mode.value == SyncPlayPlayerMode.HIDDEN) {
+							rememberBrowsingFocus()
+							// Replace an old playback page, keeping the browsing route beneath it.
+							val currentFragment = supportFragmentManager.findFragmentById(R.id.container)
+							if (currentFragment is VideoPlayerFragment || currentFragment is CustomPlaybackOverlayFragment ||
+								currentFragment is AudioNowPlayingFragment
+							) {
+								if (!navigationRepository.goBack()) navigationRepository.reset(clearHistory = true)
+							}
+							syncPlayPlayerState.show()
+						}
+					}
+					MediaType.AUDIO -> {
+						syncPlayPlayerState.hide()
+						if (supportFragmentManager.findFragmentById(R.id.container) !is AudioNowPlayingFragment) {
+							navigationRepository.navigate(Destinations.nowPlaying)
+						}
+					}
+					else -> syncPlayPlayerState.hide()
+				}
 			}.launchIn(lifecycleScope)
+	}
+
+	private fun rememberBrowsingFocus() {
+		findViewById<View>(R.id.container)?.findFocus()?.let { browsingFocus = WeakReference(it) }
+	}
+
+	private fun restoreBrowsingFocus() {
+		val previous = browsingFocus.get()
+		if (previous?.isAttachedToWindow == true && previous.isShown && previous.requestFocus()) return
+		findViewById<View>(R.id.container)?.requestFocus()
+	}
+
+	@SuppressLint("RestrictedApi") // Activity key dispatch must delegate through FragmentActivity's AndroidX bridge.
+	override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+		if (syncPlayPlayerState.mode.value == SyncPlayPlayerMode.MINIMIZED) rememberBrowsingFocus()
+		return super.dispatchKeyEvent(event)
 	}
 
 	override fun onResume() {
@@ -163,7 +230,10 @@ class MainActivity : FragmentActivity() {
 				if (syncPlay?.active == true) {
 					if (isChangingConfigurations) return@withContext
 					syncPlay.endSession()
+				} else if (!isChangingConfigurations && syncPlayPlayerState.mode.value != SyncPlayPlayerMode.HIDDEN) {
+					playbackManager.state.stop()
 				}
+				if (!isChangingConfigurations) syncPlayPlayerState.hide()
 				if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
 					withContext(Dispatchers.IO) { sessionRepository.restoreSession(destroyOnly = true) }
 				}
@@ -179,8 +249,10 @@ class MainActivity : FragmentActivity() {
 		return result
 	}
 
-	private fun onKeyEvent(keyCode: Int, event: KeyEvent?): Boolean = supportFragmentManager.fragments
-		.any { it.onKeyEvent(keyCode, event) }
+	private fun onKeyEvent(keyCode: Int, event: KeyEvent?): Boolean {
+		if (syncPlayPlayerState.mode.value == SyncPlayPlayerMode.FULLSCREEN || syncPlayPlayerState.miniPlayerFocused.value) return false
+		return supportFragmentManager.fragments.filter { it.isResumed }.any { it.onKeyEvent(keyCode, event) }
+	}
 
 	override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean =
 		onKeyEvent(keyCode, event) || super.onKeyDown(keyCode, event)
