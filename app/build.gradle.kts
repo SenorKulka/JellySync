@@ -17,6 +17,9 @@ android {
 		applicationId = namespace
 		versionName = project.getVersionName()
 		versionCode = getVersionCode(versionName!!)
+
+		// Name shown next to the version on the welcome and About screens
+		buildConfigField("String", "CLIENT_LABEL", "\"jellyfin-androidtv\"")
 	}
 
 	buildFeatures {
@@ -42,6 +45,21 @@ android {
 				storePassword = keystorePassword
 				keyAlias = signingKeyAlias
 				keyPassword = signingKeyPassword
+			}
+		}
+
+		// Jellysync: its own key, so it never depends on upstream's release signing properties.
+		val jellySyncKeystoreFile = getProperty("jellysync.keystore.file")
+		val jellySyncKeystorePassword = getProperty("jellysync.keystore.password")
+		val jellySyncKeyAlias = getProperty("jellysync.key.alias")
+		val jellySyncKeyPassword = getProperty("jellysync.key.password")
+
+		if (jellySyncKeystoreFile != null && jellySyncKeystorePassword != null && jellySyncKeyAlias != null && jellySyncKeyPassword != null) {
+			create("jellysync") {
+				storeFile = file(jellySyncKeystoreFile)
+				storePassword = jellySyncKeystorePassword
+				keyAlias = jellySyncKeyAlias
+				keyPassword = jellySyncKeyPassword
 			}
 		}
 	}
@@ -83,6 +101,22 @@ android {
 			resValue("string", "app_name", "@string/app_name_debug")
 
 			buildConfigField("boolean", "DEVELOPMENT", (defaultConfig.versionCode!! < 100).toString())
+		}
+
+		// Jellysync: an optimized release build with its own app id and name, so it installs next to the official app.
+		// Resources in src/jellysync (logo, banner) override the upstream ones.
+		create("jellysync") {
+			initWith(getByName("release"))
+			matchingFallbacks += "release"
+			applicationIdSuffix = ".jellysync"
+
+			resValue("string", "app_id", namespace + applicationIdSuffix)
+			resValue("string", "app_search_suggest_authority", "${namespace + applicationIdSuffix}.content")
+			resValue("string", "app_search_suggest_intent_data", "content://${namespace + applicationIdSuffix}.content/intent")
+			resValue("string", "app_name", "Jellysync")
+			buildConfigField("String", "CLIENT_LABEL", "\"Jellysync\"")
+
+			signingConfig = signingConfigs.findByName("jellysync")
 		}
 	}
 

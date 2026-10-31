@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Jellysync: English strings where "Jellyfin" names this app. Mentions of the Jellyfin server, Jellyfin web and other
+     Jellyfin clients stay as they are. Other languages keep upstream's translations. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
+    <string name="welcome_title">Welcome to Jellysync!</string>
+    <string name="login_help_description">Jellysync needs a Jellyfin server to connect with. Visit the Jellyfin documentation at docs.jellyfin.org or scan the QR code to get started with Jellyfin.</string>
+    <string name="no_network_permissions">Jellysync requires network permissions to function</string>
+    <string name="licenses_link_description">View the licenses of the libraries used by Jellysync</string>
+    <string name="tv_provider_enabled_description">Show Jellysync channels and recommendations on the Android TV home screen</string>
+    <string name="searchable_hint">Search Jellysync</string>
+    <string name="pref_screensaver_inapp_enabled_description">Show the Jellysync screensaver while the app is open</string>
+    <string name="playback_video_player_external_empty">You don\'t have any video player apps installed on your device that can open Jellysync videos.</string>
+</resources>

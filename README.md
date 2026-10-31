@@ -1,10 +1,10 @@
-# JellySync
+# Jellysync
 
 **Jellyfin for Android TV, plus SyncPlay.** Watch together with Jellyfin Web, iOS and Android clients from your TV:
 create, join and leave SyncPlay groups, with shared play, pause, seek and queue.
 
-JellySync is an unofficial, personal fork of [Jellyfin for Android TV](https://github.com/jellyfin/jellyfin-androidtv).
-It is not made, reviewed or supported by the Jellyfin team. Please don't report JellySync problems to them; open an
+Jellysync is an unofficial, personal fork of [Jellyfin for Android TV](https://github.com/jellyfin/jellyfin-androidtv).
+It is not made, reviewed or supported by the Jellyfin team. Please don't report Jellysync problems to them; open an
 issue here instead.
 
 ## Credits
@@ -15,14 +15,14 @@ issue here instead.
   [jellyfin/jellyfin-androidtv#5810](https://github.com/jellyfin/jellyfin-androidtv/pull/5810)
   (branch `feature/syncplay` in [his fork](https://github.com/tomerh2001/jellyfin-androidtv)). The PR was written with
   AI assistance and was declined under Jellyfin's [LLM policy](https://jellyfin.org/docs/general/contributing/llm-policies/),
-  which is why it lives here rather than upstream. JellySync's own fixes on top are AI-assisted too.
+  which is why it lives here rather than upstream. Jellysync's own fixes on top are AI-assisted too.
 
 ## What is in this fork
 
 | Branch | Contents |
 |---|---|
 | `master` | Untouched mirror of upstream `master`. |
-| `jellysync` (default) | Upstream `master`, merged with Tomer's SyncPlay branch, plus JellySync fixes. |
+| `jellysync` (default) | Upstream `master`, merged with Tomer's SyncPlay branch, plus Jellysync fixes. |
 
 Fixes on top of the SyncPlay branch, from an independent code review before first use:
 
