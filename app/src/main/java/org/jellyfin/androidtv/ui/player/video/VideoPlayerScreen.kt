@@ -1,17 +1,21 @@
 package org.jellyfin.androidtv.ui.player.video
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.flow.map
 import org.jellyfin.androidtv.data.service.BackgroundService
@@ -27,9 +31,11 @@ import org.koin.compose.koinInject
 private const val DefaultVideoAspectRatio = 16f / 9f
 
 @Composable
-fun VideoPlayerScreen() {
-	val playbackManager = koinInject<PlaybackManager>()
-
+fun VideoPlayerScreen(
+	modifier: Modifier = Modifier,
+	showControls: Boolean = true,
+	playbackManager: PlaybackManager = koinInject(),
+) {
 	val backgroundService = koinInject<BackgroundService>()
 	LaunchedEffect(backgroundService) {
 		backgroundService.clearBackgrounds()
@@ -42,36 +48,56 @@ fun VideoPlayerScreen() {
 		enabled = playing,
 	)
 
-	val videoSize by playbackManager.state.videoSize.collectAsState()
-	val aspectRatio = videoSize.aspectRatio.takeIf { !it.isNaN() && it > 0f } ?: DefaultVideoAspectRatio
-
 	val coroutineScope = rememberCoroutineScope()
 	val mediaToastRegistry = remember { MediaToastRegistry(coroutineScope) }
 	rememberPlaybackManagerMediaToastEmitter(playbackManager, mediaToastRegistry)
 
-	Box(
-		modifier = Modifier
+	VideoPlayerContent(playbackManager, mediaToastRegistry, showControls, modifier)
+}
+
+@Composable
+private fun VideoPlayerContent(
+	playbackManager: PlaybackManager,
+	mediaToastRegistry: MediaToastRegistry,
+	showControls: Boolean,
+	modifier: Modifier,
+) {
+	val videoSize by playbackManager.state.videoSize.collectAsState()
+	val aspectRatio = videoSize.aspectRatio.takeIf { it.isFinite() && it > 0f } ?: DefaultVideoAspectRatio
+	var scaleMode by rememberSaveable { mutableStateOf(VideoPlayerScaleMode.FIT) }
+
+	BoxWithConstraints(
+		modifier = modifier
 			.background(Color.Black)
 			.fillMaxSize()
+			.clipToBounds()
 	) {
+		val widerThanContainer = aspectRatio > maxWidth / maxHeight
+		val fitWidth = if (widerThanContainer) maxWidth else maxHeight * aspectRatio
+		val fitHeight = fitWidth / aspectRatio
+		val zoom = showControls && scaleMode == VideoPlayerScaleMode.ZOOM
+		val surfaceWidth = if (!zoom) fitWidth else if (widerThanContainer) maxHeight * aspectRatio else maxWidth
+		val surfaceHeight = surfaceWidth / aspectRatio
+
 		PlayerSurface(
 			playbackManager = playbackManager,
 			modifier = Modifier
-				.aspectRatio(aspectRatio, videoSize.height < videoSize.width)
-				.fillMaxSize()
+				.requiredSize(surfaceWidth, surfaceHeight)
 				.align(Alignment.Center)
 		)
 
-		VideoPlayerOverlay(
-			playbackManager = playbackManager,
-			mediaToastRegistry = mediaToastRegistry,
-		)
+		if (showControls) {
+			VideoPlayerOverlay(
+				playbackManager = playbackManager,
+				mediaToastRegistry = mediaToastRegistry,
+				scaleMode = scaleMode,
+				onScaleModeChange = { scaleMode = it },
+			)
+		}
 
 		PlayerSubtitles(
 			playbackManager = playbackManager,
-			modifier = Modifier
-				.aspectRatio(aspectRatio, videoSize.height < videoSize.width)
-				.fillMaxSize()
+			modifier = (if (zoom) Modifier.fillMaxSize() else Modifier.requiredSize(fitWidth, fitHeight))
 				.align(Alignment.Center)
 		)
 	}

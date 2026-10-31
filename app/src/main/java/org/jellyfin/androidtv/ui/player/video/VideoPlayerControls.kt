@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -25,7 +26,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.onVisibilityChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.unit.DpOffset
@@ -39,9 +39,11 @@ import org.jellyfin.androidtv.ui.base.button.IconButton
 import org.jellyfin.androidtv.ui.base.popover.Popover
 import org.jellyfin.androidtv.ui.composable.rememberPlayerPositionInfo
 import org.jellyfin.androidtv.ui.player.base.PlayerSeekbar
+import org.jellyfin.androidtv.ui.syncplay.SyncPlayButton
 import org.jellyfin.playback.core.PlaybackManager
 import org.jellyfin.playback.core.model.PlayState
 import org.jellyfin.playback.core.queue.queue
+import org.jellyfin.playback.jellyfin.mediastream.JellyfinTrackSelectionService
 import org.koin.compose.koinInject
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -50,9 +52,12 @@ import kotlin.time.DurationUnit
 @Composable
 fun VideoPlayerControls(
 	playbackManager: PlaybackManager = koinInject(),
-	onPlaybackInfoClick: () -> Unit = {},
+	actions: VideoPlayerControlActions = VideoPlayerControlActions(),
+	hasChapters: Boolean = false,
 ) {
 	val playState by playbackManager.state.playState.collectAsState()
+	val tracks by playbackManager.state.tracks.collectAsState()
+	val changingStream = playbackManager.getService<JellyfinTrackSelectionService>()?.busy?.collectAsState()?.value == true
 
 	Column(
 		verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
@@ -69,11 +74,19 @@ fun VideoPlayerControls(
 
 			Spacer(Modifier.weight(1f))
 
-			PlaybackInfoButton(onClick = onPlaybackInfoClick)
+			if (tracks.audio.isNotEmpty()) {
+				PlayerOptionButton(R.drawable.ic_select_audio, R.string.lbl_audio_track, actions.onAudioClick, enabled = !changingStream)
+			}
+			PlayerOptionButton(R.drawable.ic_select_subtitle, R.string.lbl_subtitle_track, actions.onSubtitlesClick, enabled = !changingStream)
+			PlaybackInfoButton(onClick = actions.onPlaybackInfoClick)
+			SyncPlayButton(onClick = actions.onSyncPlayClick, playbackManager = playbackManager)
 
 			MoreOptionsButton {
 				PreviousEntryButton(playbackManager)
 				NextEntryButton(playbackManager)
+				if (hasChapters) PlayerOptionButton(R.drawable.ic_select_chapter, R.string.lbl_chapters, actions.onChaptersClick)
+				PlayerOptionButton(R.drawable.ic_aspect_ratio, R.string.lbl_zoom, actions.onScaleClick)
+				PlayerOptionButton(R.drawable.ic_select_quality, R.string.lbl_quality_profile, actions.onQualityClick, enabled = !changingStream)
 			}
 		}
 
@@ -91,6 +104,7 @@ fun VideoPlayerControls(
 				.focusGroup()
 		) {
 			Spacer(Modifier.weight(1f))
+			if (changingStream) Text(stringResource(R.string.loading))
 			PositionText(playbackManager)
 		}
 	}
@@ -102,6 +116,9 @@ private fun PlayPauseButton(
 	playState: PlayState,
 ) {
 	val focusRequester = remember { FocusRequester() }
+	LaunchedEffect(focusRequester) {
+		focusRequester.requestFocus()
+	}
 	IconButton(
 		onClick = {
 			when (playState) {
@@ -114,9 +131,6 @@ private fun PlayPauseButton(
 		},
 		modifier = Modifier
 			.focusRequester(focusRequester)
-			.onVisibilityChanged {
-				focusRequester.requestFocus()
-			}
 	) {
 		AnimatedContent(playState) { playState ->
 			when (playState) {

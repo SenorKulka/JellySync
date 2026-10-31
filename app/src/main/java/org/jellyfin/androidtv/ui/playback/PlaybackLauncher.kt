@@ -1,10 +1,19 @@
 package org.jellyfin.androidtv.ui.playback
 
 import android.content.Context
+import android.content.ContextWrapper
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import org.jellyfin.androidtv.preference.UserPreferences
 import org.jellyfin.androidtv.ui.navigation.ActivityDestinations
 import org.jellyfin.androidtv.ui.navigation.Destinations
 import org.jellyfin.androidtv.ui.navigation.NavigationRepository
+import org.jellyfin.androidtv.ui.syncplay.SyncPlayPlayerMode
+import org.jellyfin.androidtv.ui.syncplay.SyncPlayPlayerState
+import org.jellyfin.playback.core.PlaybackManager
+import org.jellyfin.playback.jellyfin.syncplay.SyncPlayService
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.MediaType
@@ -19,6 +28,8 @@ class PlaybackLauncher(
 	private val videoQueueManager: VideoQueueManager,
 	private val navigationRepository: NavigationRepository,
 	private val userPreferences: UserPreferences,
+	private val playbackManager: PlaybackManager,
+	private val syncPlayPlayerState: SyncPlayPlayerState,
 ) {
 	private val BaseItemDto.supportsExternalPlayer
 		get() = when (type) {
@@ -44,6 +55,30 @@ class PlaybackLauncher(
 		itemsPosition: Int = 0,
 		shuffle: Boolean = false,
 	) {
+		val syncPlay = playbackManager.getService<SyncPlayService>()
+		if (syncPlay?.group?.value != null) {
+			val groupItems = if (shuffle) items.shuffled() else items
+			if (groupItems.isEmpty()) return
+			val scope = generateSequence(context) { (it as? ContextWrapper)?.baseContext }
+				.filterIsInstance<LifecycleOwner>()
+				.firstOrNull()
+				?.lifecycleScope ?: ProcessLifecycleOwner.get().lifecycleScope
+			scope.launch {
+				syncPlay.playItems(groupItems.map { it.id }, itemsPosition, position?.milliseconds ?: Duration.ZERO)
+				if (syncPlay.group.value != null && syncPlay.error.value == null &&
+					groupItems.getOrNull(itemsPosition)?.mediaType == MediaType.VIDEO
+				) syncPlayPlayerState.show()
+			}
+			return
+		}
+
+		// A video retained after explicitly leaving a party is local playback. A new
+		// selection must close that host before launching the user's preferred player.
+		if (syncPlayPlayerState.mode.value != SyncPlayPlayerMode.HIDDEN) {
+			syncPlayPlayerState.hide()
+			playbackManager.state.stop()
+		}
+
 		val isAudio = items.any { it.mediaType == MediaType.AUDIO }
 
 		if (isAudio) {

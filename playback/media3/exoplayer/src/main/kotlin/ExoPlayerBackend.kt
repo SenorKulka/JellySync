@@ -5,12 +5,15 @@ import android.content.Context
 import android.view.ViewGroup
 import androidx.annotation.OptIn
 import androidx.core.content.getSystemService
+import androidx.core.net.toUri
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.common.TrackSelectionParameters
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
@@ -38,8 +41,11 @@ import org.jellyfin.playback.core.mediastream.mediatype.MediaType
 import org.jellyfin.playback.core.mediastream.mediatype.mediaType
 import org.jellyfin.playback.core.mediastream.normalizationGain
 import org.jellyfin.playback.core.model.PlayState
+import org.jellyfin.playback.core.model.MediaTrack
+import org.jellyfin.playback.core.model.PlayerTracks
 import org.jellyfin.playback.core.model.PositionInfo
 import org.jellyfin.playback.core.queue.QueueEntry
+import org.jellyfin.playback.core.queue.initialPlayback
 import org.jellyfin.playback.core.support.PlaySupportReport
 import org.jellyfin.playback.core.timedevent.TimedEvent
 import org.jellyfin.playback.core.ui.PlayerSubtitleView
@@ -67,6 +73,11 @@ class ExoPlayerBackend(
 	private val audioAttributeState = AudioAttributeState()
 	private val timedEventState = TimedEventState()
 	private var lastKnownDuration: Duration? = null
+	private var trackSelection = PlayerTracks()
+	private var currentTimedEvents = emptyList<TimedEvent>()
+	private var pendingStreamReload: QueueEntry? = null
+	override var seekGeneration = 0L
+		private set
 
 	private val assHandler by lazy {
 		AssHandler(AssRenderType.OVERLAY_OPEN_GL)
@@ -115,7 +126,8 @@ class ExoPlayerBackend(
 				exoPlayerOptions.minBufferDuration?.inWholeMilliseconds?.toInt() ?: DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
 				exoPlayerOptions.maxBufferDuration?.inWholeMilliseconds?.toInt() ?: DefaultLoadControl.DEFAULT_MAX_BUFFER_MS,
 				exoPlayerOptions.bufferForPlaybackDuration?.inWholeMilliseconds?.toInt() ?: DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
-				exoPlayerOptions.bufferForPlaybackAfterRebufferDuration?.inWholeMilliseconds?.toInt() ?: DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
+				exoPlayerOptions.bufferForPlaybackAfterRebufferDuration?.inWholeMilliseconds?.toInt()
+					?: DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
 			)
 			.build()
 
@@ -149,6 +161,18 @@ class ExoPlayerBackend(
 	}
 
 	inner class PlayerListener : Player.Listener {
+		override fun onTracksChanged(tracks: Tracks) {
+			if (selectedStream() == null) return
+			val selected = tracks.groups.flatMap { group ->
+				(0 until group.length).filter(group::isTrackSelected).map { index ->
+					val format = group.getTrackFormat(index)
+					"${group.type}:${format.id}:${format.language}"
+				}
+			}
+			Timber.d("Selected playback tracks: %s", selected)
+			applyTrackSelection()
+		}
+
 		override fun onIsPlayingChanged(isPlaying: Boolean) {
 			val state = when {
 				isPlaying -> PlayState.PLAYING
@@ -160,6 +184,7 @@ class ExoPlayerBackend(
 
 		override fun onPlayerError(error: PlaybackException) {
 			listener?.onPlayStateChange(PlayState.ERROR)
+			selectedStream()?.let { listener?.onMediaStreamError(it.queueEntry) }
 		}
 
 		override fun onVideoSizeChanged(size: VideoSize) {
@@ -174,11 +199,16 @@ class ExoPlayerBackend(
 
 		override fun onPlaybackStateChanged(playbackState: Int) {
 			onIsPlayingChanged(exoPlayer.isPlaying)
+			selectedStream()?.queueEntry?.let { entry ->
+				val waitingForReload = pendingStreamReload === entry
+				listener?.onBuffering(entry, waitingForReload || playbackState == Player.STATE_BUFFERING)
+				if (!waitingForReload && playbackState == Player.STATE_READY) listener?.onMediaStreamReady(entry)
+			}
 		}
 
 		override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
 			if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) {
-				listener?.onMediaStreamEnd(requireNotNull(currentStream))
+				selectedStream()?.let { listener?.onMediaStreamEnd(it) }
 			}
 		}
 
@@ -189,18 +219,30 @@ class ExoPlayerBackend(
 		override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
 			val queueEntry = mediaItem?.localConfiguration?.tag as? QueueEntry
 			audioPipeline.normalizationGain = queueEntry?.normalizationGain
+			updateDuration()
 		}
 
 		override fun onTimelineChanged(timeline: Timeline, reason: Int) {
-			val duration = exoPlayer.duration.takeUnless { it == C.TIME_UNSET }?.milliseconds
-			if (duration == lastKnownDuration) return
-			timedEventState.onDurationChange(exoPlayer, duration)
-			lastKnownDuration = duration
+			updateDuration()
 		}
 
 		override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
-			timedEventState.onSeek(oldPosition.positionMs.milliseconds, newPosition.positionMs.milliseconds, lastKnownDuration ?: Duration.ZERO)
+			val offset = currentStream?.startPosition ?: Duration.ZERO
+			timedEventState.onSeek(oldPosition.positionMs.milliseconds + offset, newPosition.positionMs.milliseconds + offset,
+				(lastKnownDuration ?: Duration.ZERO) + offset)
 		}
+	}
+
+	private fun selectedStream(): PlayableMediaStream? {
+		val selectedEntry = exoPlayer.currentMediaItem?.localConfiguration?.tag as? QueueEntry
+		return currentStream?.takeIf { it.queueEntry === selectedEntry }
+	}
+
+	private fun updateDuration() {
+		val duration = exoPlayer.duration.takeUnless { it == C.TIME_UNSET }?.milliseconds
+		if (duration == lastKnownDuration) return
+		timedEventState.onDurationChange(exoPlayer, duration?.plus(currentStream?.startPosition ?: Duration.ZERO))
+		lastKnownDuration = duration
 	}
 
 	override fun supportsStream(
@@ -234,6 +276,18 @@ class ExoPlayerBackend(
 			setTag(item)
 			setMediaId(stream.hashCode().toString())
 			setUri(stream.url)
+			setSubtitleConfigurations(stream.externalSubtitles.map { subtitle ->
+				MediaItem.SubtitleConfiguration.Builder(subtitle.url.toUri())
+					.setId("$EXTERNAL_SUBTITLE_PREFIX${subtitle.id}")
+					.setMimeType(subtitle.mimeType)
+					.setLanguage(subtitle.language)
+					.setLabel(subtitle.title)
+					.setSelectionFlags(
+						(if (subtitle.default) C.SELECTION_FLAG_DEFAULT else 0) or
+							(if (subtitle.forced) C.SELECTION_FLAG_FORCED else 0)
+					)
+					.build()
+			})
 		}.build()
 
 		// Remove any excessive items from the start
@@ -251,6 +305,15 @@ class ExoPlayerBackend(
 		if (currentStream == stream) return
 
 		currentStream = stream
+		pendingStreamReload = null
+		trackSelection = stream.trackSelection
+		listener?.onTracksChanged(trackSelection)
+		exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
+			.clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+			.clearOverridesOfType(C.TRACK_TYPE_TEXT)
+			.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, trackSelection.selectedSubtitleId == null)
+			.build()
+		exoPlayer.playWhenReady = item.initialPlayback.playWhenReady
 
 		var preparedItemIndex = (0 until exoPlayer.mediaItemCount).firstOrNull { index ->
 			exoPlayer.getMediaItemAt(index).mediaId == stream.hashCode().toString()
@@ -263,12 +326,9 @@ class ExoPlayerBackend(
 		}
 
 		// Seek to prepared media item
-		when (preparedItemIndex) {
-			exoPlayer.currentMediaItemIndex - 1 -> exoPlayer.seekToPreviousMediaItem()
-			exoPlayer.currentMediaItemIndex + 1 -> exoPlayer.seekToNextMediaItem()
-			exoPlayer.currentMediaItemIndex -> Unit
-			else -> exoPlayer.seekTo(preparedItemIndex, 0)
-		}
+		exoPlayer.seekTo(preparedItemIndex, (item.initialPlayback.position - stream.startPosition).inWholeMilliseconds.coerceAtLeast(0))
+		timedEventState.setTimedEvents(exoPlayer, currentTimedEvents, stream.startPosition)
+		applyTrackSelection()
 
 		// Update audio attributes
 		val contentType = when (item.mediaType) {
@@ -288,8 +348,13 @@ class ExoPlayerBackend(
 		)
 
 		// Enjoy!
-		Timber.i("Playing ${item.mediaStream?.url}")
-		exoPlayer.play()
+		Timber.i("Playing stream %s using %s", stream.identifier, stream.conversionMethod)
+		if (item.initialPlayback.playWhenReady) exoPlayer.play()
+		else exoPlayer.pause()
+		// Already prepared entries need a ready notification even without a state transition.
+		if (exoPlayer.playbackState == Player.STATE_READY && selectedStream()?.queueEntry === item) {
+			listener?.onMediaStreamReady(item)
+		}
 	}
 
 	override fun play() {
@@ -305,14 +370,84 @@ class ExoPlayerBackend(
 	override fun stop() {
 		exoPlayer.stop()
 		currentStream = null
+		pendingStreamReload = null
+		trackSelection = PlayerTracks()
+		listener?.onTracksChanged(trackSelection)
+	}
+
+	private fun availableTracks(type: Int) = exoPlayer.currentTracks.groups
+		.filter { it.type == type }
+		.flatMap { group -> (0 until group.length).map { index -> group to index } }
+
+	private fun findTrack(track: MediaTrack, type: Int): Pair<Tracks.Group, Int>? {
+		val tracks = availableTracks(type)
+		val index = findTrackIndex(track, tracks.map { (group, index) -> group.getTrackFormat(index).id })
+		return index?.let(tracks::getOrNull)
+	}
+
+	private fun applyTrackSelection() {
+		if (selectedStream() == null) return
+		val parameters = exoPlayer.trackSelectionParameters.buildUpon()
+		trackSelection.audio.firstOrNull { it.id == trackSelection.selectedAudioId && !it.requiresReload }
+			?.let { findTrack(it, C.TRACK_TYPE_AUDIO) }
+			?.let { (group, index) -> parameters.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, index)) }
+		val subtitle = trackSelection.subtitles.firstOrNull { it.id == trackSelection.selectedSubtitleId }
+		parameters.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, subtitle == null || subtitle.requiresReload)
+		if (subtitle != null && !subtitle.requiresReload) {
+			findTrack(subtitle, C.TRACK_TYPE_TEXT)?.let { (group, index) ->
+				parameters.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, index))
+			}
+		}
+		exoPlayer.trackSelectionParameters = parameters.build()
+		listener?.onTracksChanged(trackSelection)
+	}
+
+	override fun selectAudioTrack(id: String) {
+		val entry = selectedStream()?.queueEntry ?: return
+		val track = trackSelection.audio.firstOrNull { it.id == id } ?: return
+		if (track.requiresReload || findTrack(track, C.TRACK_TYPE_AUDIO) == null) {
+			listener?.onTrackSelectionRequested(entry, id, trackSelection.selectedSubtitleId)
+			return
+		}
+		trackSelection = trackSelection.copy(selectedAudioId = id)
+		applyTrackSelection()
+	}
+
+	override fun selectSubtitleTrack(id: String?) {
+		val entry = selectedStream()?.queueEntry ?: return
+		val track = trackSelection.subtitles.firstOrNull { it.id == id }
+		if (id != null && track == null) return
+		val current = trackSelection.subtitles.firstOrNull { it.id == trackSelection.selectedSubtitleId }
+		val missingTrack = track != null && findTrack(track, C.TRACK_TYPE_TEXT) == null
+		if (current?.requiresReload == true || track?.requiresReload == true || missingTrack) {
+			listener?.onTrackSelectionRequested(entry, trackSelection.selectedAudioId, id)
+			return
+		}
+		trackSelection = trackSelection.copy(selectedSubtitleId = id)
+		applyTrackSelection()
 	}
 
 	override fun seekTo(position: Duration) {
+		seekGeneration++
+		val stream = selectedStream() ?: return
+		if (position < stream.startPosition || !exoPlayer.isCurrentMediaItemSeekable) {
+			pendingStreamReload = stream.queueEntry
+			listener?.onBuffering(stream.queueEntry, true)
+			listener?.onSeekRequested(stream.queueEntry, position)
+			return
+		}
 		if (!exoPlayer.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) || !exoPlayer.isCurrentMediaItemSeekable) {
 			Timber.w("Trying to seek but ExoPlayer doesn't support it for the current item")
 		}
 
-		exoPlayer.seekTo(position.inWholeMilliseconds)
+		exoPlayer.seekTo((position - (currentStream?.startPosition ?: Duration.ZERO)).inWholeMilliseconds.coerceAtLeast(0))
+	}
+
+	override fun cancelStreamReload(entry: QueueEntry) {
+		if (selectedStream()?.queueEntry !== entry) return
+		pendingStreamReload = null
+		listener?.onBuffering(entry, exoPlayer.playbackState == Player.STATE_BUFFERING)
+		if (exoPlayer.playbackState == Player.STATE_READY) listener?.onMediaStreamReady(entry)
 	}
 
 	override fun setScrubbing(scrubbing: Boolean) {
@@ -328,12 +463,13 @@ class ExoPlayerBackend(
 	}
 
 	override fun getPositionInfo(): PositionInfo = PositionInfo(
-		active = exoPlayer.currentPosition.milliseconds,
-		buffer = exoPlayer.bufferedPosition.milliseconds,
-		duration = lastKnownDuration ?: Duration.ZERO,
+		active = exoPlayer.currentPosition.milliseconds + (currentStream?.startPosition ?: Duration.ZERO),
+		buffer = exoPlayer.bufferedPosition.milliseconds + (currentStream?.startPosition ?: Duration.ZERO),
+		duration = (lastKnownDuration ?: Duration.ZERO) + (currentStream?.startPosition ?: Duration.ZERO),
 	)
 
 	override fun setTimedEvents(timedEvents: List<TimedEvent>) {
-		timedEventState.setTimedEvents(exoPlayer, timedEvents)
+		currentTimedEvents = timedEvents
+		timedEventState.setTimedEvents(exoPlayer, timedEvents, currentStream?.startPosition ?: Duration.ZERO)
 	}
 }

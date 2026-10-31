@@ -3,8 +3,11 @@ package org.jellyfin.playback.core.backend
 import androidx.core.view.doOnDetach
 import org.jellyfin.playback.core.mediastream.PlayableMediaStream
 import org.jellyfin.playback.core.model.PlayState
+import org.jellyfin.playback.core.model.PlayerTracks
+import org.jellyfin.playback.core.queue.QueueEntry
 import org.jellyfin.playback.core.ui.PlayerSubtitleView
 import org.jellyfin.playback.core.ui.PlayerSurfaceView
+import kotlin.time.Duration
 
 /**
  * Service keeping track of the current playback backend and its related surface view.
@@ -79,6 +82,29 @@ class BackendService {
 	}
 
 	inner class BackendEventListener : PlayerBackendEventListener() {
+		override fun onSeekRequested(entry: QueueEntry, position: Duration) {
+			callListeners { onSeekRequested(entry, position) }
+		}
+
+		override fun onTracksChanged(tracks: PlayerTracks) {
+			callListeners { onTracksChanged(tracks) }
+		}
+
+		override fun onTrackSelectionRequested(entry: QueueEntry, audioId: String?, subtitleId: String?) {
+			callListeners { onTrackSelectionRequested(entry, audioId, subtitleId) }
+		}
+
+		override fun onBuffering(entry: QueueEntry, buffering: Boolean) {
+			callListeners { onBuffering(entry, buffering) }
+		}
+
+		override fun onMediaStreamReady(entry: QueueEntry) {
+			callListeners { onMediaStreamReady(entry) }
+		}
+
+		override fun onMediaStreamError(entry: QueueEntry) {
+			callListeners { onMediaStreamError(entry) }
+		}
 		private fun <T> callListeners(
 			body: PlayerBackendEventListener.() -> T
 		): List<T> = listeners.map { listener -> listener.body() }

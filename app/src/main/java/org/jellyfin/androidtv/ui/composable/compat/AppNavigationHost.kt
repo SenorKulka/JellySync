@@ -2,6 +2,7 @@ package org.jellyfin.androidtv.ui.composable.compat
 
 import android.content.Context
 import android.view.View
+import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -20,6 +21,7 @@ import org.koin.compose.koinInject
 @Composable
 fun AppNavigationHost(
 	modifier: Modifier = Modifier,
+	interactive: Boolean = true,
 	navigationRepository: NavigationRepository = koinInject(),
 ) {
 	val factory = remember { AppNavigationHostViewFactory() }
@@ -28,11 +30,16 @@ fun AppNavigationHost(
 		navigationRepository.currentAction.map { navigationRepository.canGoBack }.distinctUntilChanged()
 	}.collectAsState(navigationRepository.canGoBack)
 
-	BackHandler(canGoBack) { navigationRepository.goBack() }
+	BackHandler(canGoBack && interactive) { navigationRepository.goBack() }
 
 	AndroidView(
 		factory = factory,
 		modifier = modifier,
+		update = { view ->
+			view.descendantFocusability = if (interactive) ViewGroup.FOCUS_AFTER_DESCENDANTS else ViewGroup.FOCUS_BLOCK_DESCENDANTS
+			view.importantForAccessibility = if (interactive) View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+			else View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+		},
 	)
 
 	LaunchedEffect(Unit) {
@@ -46,14 +53,14 @@ fun AppNavigationHost(
 	}
 }
 
-private class AppNavigationHostViewFactory : (Context) -> View {
+private class AppNavigationHostViewFactory : (Context) -> DestinationFragmentView {
 	private var _view: DestinationFragmentView? = null
 
 	val view get() = requireNotNull(_view)
 
 	override operator fun invoke(
 		context: Context
-	): View = DestinationFragmentView(context).also { view ->
+	): DestinationFragmentView = DestinationFragmentView(context).also { view ->
 		_view = view
 	}
 }

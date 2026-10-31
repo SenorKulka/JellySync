@@ -54,6 +54,7 @@ import org.jellyfin.androidtv.ui.settings.screen.library.SettingsLibrariesScreen
 import org.jellyfin.androidtv.ui.startup.ServerAddViewModel
 import org.jellyfin.androidtv.ui.startup.StartupViewModel
 import org.jellyfin.androidtv.ui.startup.UserLoginViewModel
+import org.jellyfin.androidtv.ui.syncplay.SyncPlayPlayerState
 import org.jellyfin.androidtv.util.AndroidVersion
 import org.jellyfin.androidtv.util.KeyProcessor
 import org.jellyfin.androidtv.util.MarkdownRenderer
@@ -62,6 +63,7 @@ import org.jellyfin.androidtv.util.apiclient.ReportingHelper
 import org.jellyfin.androidtv.util.coil.CoilTimberLogger
 import org.jellyfin.androidtv.util.coil.createCoilConnectivityChecker
 import org.jellyfin.androidtv.util.sdk.SdkPlaybackHelper
+import org.jellyfin.playback.jellyfin.network.ReliableApiClientFactory
 import org.jellyfin.sdk.android.androidDevice
 import org.jellyfin.sdk.api.client.HttpClientOptions
 import org.jellyfin.sdk.api.okhttp.OkHttpFactory
@@ -97,7 +99,7 @@ val appModule = module {
 			minimumServerVersion = ServerRepository.minimumServerVersion
 
 			// Use our own shared factory instance
-			apiClientFactory = get<OkHttpFactory>()
+			apiClientFactory = ReliableApiClientFactory(get())
 			socketConnectionFactory = get<OkHttpFactory>()
 		}
 	}
@@ -140,6 +142,7 @@ val appModule = module {
 	single { DataRefreshService() }
 	single { PlaybackControllerContainer() }
 	single { InteractionTrackerViewModel(get(), get()) }
+	single { SyncPlayPlayerState() }
 
 	single<UserRepository> { UserRepositoryImpl() }
 	single<UserViewsRepository> { UserViewsRepositoryImpl(get()) }
