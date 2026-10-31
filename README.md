@@ -32,15 +32,38 @@ Fixes on top of the SyncPlay branch, from an independent code review before firs
 
 ## Install
 
-It builds as a debug app (`org.jellyfin.androidtv.debug`, shown as **Jellyfin Debug**) that installs **next to** the
-official app, so your normal Jellyfin app is never touched.
+Jellysync builds as its own app (`org.jellyfin.androidtv.jellysync`, shown as **Jellysync**) that installs **next to**
+the official app, so your normal Jellyfin app is never touched. It is optimized like an upstream release build and
+signed with your own key.
 
-```sh
-./gradlew test assembleDebug            # JDK 21, Android SDK platform android-37.0, build-tools 36.0.0
-adb install -r app/build/outputs/apk/debug/*.apk
-```
+1. Create a signing key once, and keep a backup of it: every update must be signed with the same key.
 
-Then open Jellyfin Debug, sign in, and choose **SyncPlay** in the home toolbar.
+   ```sh
+   keytool -genkeypair -keystore ~/.android/jellysync-release.jks -storetype PKCS12 -alias jellysync \
+     -keyalg RSA -keysize 4096 -validity 36500 -dname "CN=JellySync"
+   ```
+
+2. Tell Gradle about it in `~/.gradle/gradle.properties` (outside the repo):
+
+   ```properties
+   jellysync.keystore.file=/path/to/jellysync-release.jks
+   jellysync.keystore.password=...
+   jellysync.key.alias=jellysync
+   jellysync.key.password=...
+   ```
+
+3. Build and install (JDK 21, Android SDK platform `android-37.0`, build-tools `36.0.0`):
+
+   ```sh
+   TV_HOST=<tv ip> jellysync/build.sh   # runs the tests, builds, checks the signature, installs over ADB
+   ```
+
+   Bump `jellysync/VERSION` before installing an update: Android only accepts a higher version.
+
+Then open Jellysync, sign in, and choose **SyncPlay** in the home toolbar.
+
+The logo is Jellyfin's mark with a "Jellysync" wordmark made from Jellyfin's own lettering; see
+[`branding/`](branding/README.md) for how it is generated and its CC BY-SA 4.0 notice.
 
 ## Keeping up with upstream
 
@@ -48,7 +71,7 @@ We try to keep this current by merging upstream regularly:
 
 ```sh
 git fetch upstream && git checkout master && git merge --ff-only upstream/master && git push
-git checkout jellysync && git merge master   # resolve, then: ./gradlew test assembleDebug
+git checkout jellysync && git merge master   # resolve, bump jellysync/VERSION, then: jellysync/build.sh
 ```
 
 ### The weak point
