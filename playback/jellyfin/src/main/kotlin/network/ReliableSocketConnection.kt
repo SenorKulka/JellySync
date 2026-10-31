@@ -24,6 +24,8 @@ import org.jellyfin.sdk.api.client.util.ApiSerializer
 import org.jellyfin.sdk.api.client.util.AuthorizationHeaderBuilder
 import org.jellyfin.sdk.api.okhttp.OkHttpFactory
 import org.jellyfin.sdk.api.sockets.SocketApiState
+import org.jellyfin.sdk.model.ClientInfo
+import org.jellyfin.sdk.model.DeviceInfo
 import org.jellyfin.sdk.model.api.ForceKeepAliveMessage
 import org.jellyfin.sdk.model.api.InboundKeepAliveMessage
 import org.jellyfin.sdk.model.api.InboundWebSocketMessage
@@ -55,7 +57,7 @@ class ReliableSocketConnection(
 
 	/** Return after the server's first frame, before making the REST Create/Join request. */
 	@Suppress("TooGenericExceptionCaught") // Decoding is the boundary of an ordered network stream.
-	suspend fun connect(parentScope: CoroutineScope) {
+	suspend fun connect(parentScope: CoroutineScope, credentials: SocketCredentials) {
 		close()
 		val session = Connection(CoroutineScope(parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext[Job])))
 		connection = session
@@ -82,13 +84,13 @@ class ReliableSocketConnection(
 			}
 		}
 		val request = Request.Builder()
-			.url(api.createUrl("/socket"))
+			.url(credentials.url)
 			.header("Authorization", AuthorizationHeaderBuilder.buildHeader(
-				clientName = api.clientInfo.name,
-				clientVersion = api.clientInfo.version,
-				deviceId = api.deviceInfo.id,
-				deviceName = api.deviceInfo.name,
-				accessToken = requireNotNull(api.accessToken),
+				clientName = credentials.clientInfo.name,
+				clientVersion = credentials.clientInfo.version,
+				deviceId = credentials.deviceInfo.id,
+				deviceName = credentials.deviceInfo.name,
+				accessToken = credentials.accessToken,
 			))
 			.build()
 		session.socket = factory.newWebSocket(request, listener(session))
@@ -178,5 +180,25 @@ class ReliableSocketConnection(
 		const val FRAME_CAPACITY = 256
 		const val MILLIS_PER_HALF_SECOND = 500L
 		const val MILLIS_PER_DOUBLE_SECOND = 2_000L
+	}
+}
+
+/**
+ * Everything the socket handshake sends, read from the API client in one go. The handshake must never reread the
+ * client's mutable fields: a session switch in between could pair one server's URL with another server's token.
+ */
+data class SocketCredentials(
+	val url: String,
+	val accessToken: String,
+	val clientInfo: ClientInfo,
+	val deviceInfo: DeviceInfo,
+) {
+	companion object {
+		/** Call only where updates to [api] cannot run concurrently (see ReliableApiClient). */
+		fun from(api: ApiClient): SocketCredentials? {
+			if (api.baseUrl == null) return null
+			val accessToken = api.accessToken ?: return null
+			return SocketCredentials(api.createUrl("/socket"), accessToken, api.clientInfo, api.deviceInfo)
+		}
 	}
 }

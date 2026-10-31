@@ -1,3 +1,76 @@
+# JellySync
+
+**Jellyfin for Android TV, plus SyncPlay.** Watch together with Jellyfin Web, iOS and Android clients from your TV:
+create, join and leave SyncPlay groups, with shared play, pause, seek and queue.
+
+JellySync is an unofficial, personal fork of [Jellyfin for Android TV](https://github.com/jellyfin/jellyfin-androidtv).
+It is not made, reviewed or supported by the Jellyfin team. Please don't report JellySync problems to them; open an
+issue here instead.
+
+## Credits
+
+- **The [Jellyfin](https://jellyfin.org) team and contributors**, who build the server, the SyncPlay protocol and
+  the Android TV app this fork is built on. Everything below the line is their work and their README.
+- **[Tomer Horowitz](https://github.com/tomerh2001)**, who wrote SyncPlay for the TV app in
+  [jellyfin/jellyfin-androidtv#5810](https://github.com/jellyfin/jellyfin-androidtv/pull/5810)
+  (branch `feature/syncplay` in [his fork](https://github.com/tomerh2001/jellyfin-androidtv)). The PR was written with
+  AI assistance and was declined under Jellyfin's [LLM policy](https://jellyfin.org/docs/general/contributing/llm-policies/),
+  which is why it lives here rather than upstream. JellySync's own fixes on top are AI-assisted too.
+
+## What is in this fork
+
+| Branch | Contents |
+|---|---|
+| `master` | Untouched mirror of upstream `master`. |
+| `jellysync` (default) | Upstream `master`, merged with Tomer's SyncPlay branch, plus JellySync fixes. |
+
+Fixes on top of the SyncPlay branch, from an independent code review before first use:
+
+- The SyncPlay socket builds its handshake from one snapshot of the server URL, token and device, so a server or
+  account switch during a reconnect cannot pair one server's address with another server's token.
+- Leaving or signing out while a group is still being created or joined no longer sends a stale Create/Join request.
+
+## Install
+
+It builds as a debug app (`org.jellyfin.androidtv.debug`, shown as **Jellyfin Debug**) that installs **next to** the
+official app, so your normal Jellyfin app is never touched.
+
+```sh
+./gradlew test assembleDebug            # JDK 21, Android SDK platform android-37.0, build-tools 36.0.0
+adb install -r app/build/outputs/apk/debug/*.apk
+```
+
+Then open Jellyfin Debug, sign in, and choose **SyncPlay** in the home toolbar.
+
+## Keeping up with upstream
+
+We try to keep this current by merging upstream regularly:
+
+```sh
+git fetch upstream && git checkout master && git merge --ff-only upstream/master && git push
+git checkout jellysync && git merge master   # resolve, then: ./gradlew test assembleDebug
+```
+
+### The weak point
+
+SyncPlay hooks into the player and the playback code, and upstream is in the middle of rewriting exactly that
+([#1057](https://github.com/jellyfin/jellyfin-androidtv/issues/1057)). For now upstream merges in cleanly, but a large
+playback change upstream will eventually break the merge. At that point the SyncPlay code has to be reworked on top of
+the new player, or, if upstream ships its own SyncPlay as part of that rewrite, this fork has served its purpose and
+should be retired in favour of the official app. Expect lag after big upstream releases.
+
+## Known issues
+
+- Tested against a Jellyfin 12.3 server. SyncPlay has broken between server versions before.
+- Group messages are handled in order, and fetching item details for a queue blocks the commands behind it: with a
+  long shared playlist or a slow server, play/pause/seek from others can arrive late.
+- With the experimental "new playback" setting on, resuming an ordinary (non-SyncPlay) video can start from the
+  beginning. It is off by default.
+- Subtitle files at absolute URLs provided by the server are fetched as given, even from another host or over plain
+  HTTP. No token is attached to them.
+
+---
+
 <h1 align="center">Jellyfin for Android TV</h1>
 <h3 align="center">Part of the <a href="https://jellyfin.org">Jellyfin Project</a></h3>
 

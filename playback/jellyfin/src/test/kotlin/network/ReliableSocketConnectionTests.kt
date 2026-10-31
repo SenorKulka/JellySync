@@ -30,12 +30,29 @@ import org.jellyfin.sdk.model.api.SyncPlayGroupJoinedUpdate
 import org.jellyfin.sdk.model.api.SyncPlayGroupUpdateMessage
 
 class ReliableSocketConnectionTests : FunSpec({
+	test("the handshake uses only its credential snapshot, never the API client's current values") {
+		runTest {
+			val fixture = SocketFixture(this)
+			// The API client has already switched to another server since the snapshot was taken.
+			fixture.switchApiToOtherServer()
+			val request = slot<Request>()
+			every { fixture.factory.newWebSocket(capture(request), capture(fixture.listener)) } returns fixture.webSocket
+			fixture.connect()
+			request.captured.url.toString() shouldBe "https://jellyfin.example.test/socket"
+			val authorization = request.captured.header("Authorization").orEmpty()
+			authorization.contains("test-token") shouldBe true
+			authorization.contains("other-token") shouldBe false
+			authorization.contains("other-device") shouldBe false
+			fixture.socket.close()
+		}
+	}
+
 	test("serialized GroupJoined and Stop in one startup burst both reach the typed consumer") {
 		runTest {
 			val fixture = SocketFixture(this)
 			val received = mutableListOf<OutboundWebSocketMessage>()
 			backgroundScope.launch { fixture.socket.messages.collect { received += it } }
-			val connecting = async { fixture.socket.connect(backgroundScope) }
+			val connecting = async { fixture.socket.connect(backgroundScope, fixture.credentials) }
 			runCurrent()
 			// Deliberately do not yield between callbacks, reproducing the real server's burst.
 			fixture.deliver(GROUP_JOINED)
@@ -106,10 +123,16 @@ class ReliableSocketConnectionTests : FunSpec({
 
 private class SocketFixture(private val scope: TestScope) {
 	private val api = mockk<ApiClient>()
-	private val factory = mockk<WebSocket.Factory>()
+	val factory = mockk<WebSocket.Factory>()
 	val webSocket = mockk<WebSocket>(relaxed = true)
 	val listener = slot<WebSocketListener>()
 	val socket = ReliableSocketConnection(api, factory)
+	val credentials = SocketCredentials(
+		"https://jellyfin.example.test/socket",
+		"test-token",
+		ClientInfo("TV", "test"),
+		DeviceInfo("tv-device", "Test TV"),
+	)
 
 	init {
 		every { api.createUrl("/socket", any(), any(), any()) } returns "https://jellyfin.example.test/socket"
@@ -120,8 +143,14 @@ private class SocketFixture(private val scope: TestScope) {
 		every { webSocket.send(any<String>()) } returns true
 	}
 
+	fun switchApiToOtherServer() {
+		every { api.createUrl("/socket", any(), any(), any()) } returns "https://other.example.test/socket"
+		every { api.deviceInfo } returns DeviceInfo("other-device", "Other TV")
+		every { api.accessToken } returns "other-token"
+	}
+
 	suspend fun connect() {
-		val connecting = scope.async { socket.connect(scope.backgroundScope) }
+		val connecting = scope.async { socket.connect(scope.backgroundScope, credentials) }
 		scope.runCurrent()
 		deliver(FORCE_KEEP_ALIVE)
 		scope.runCurrent()

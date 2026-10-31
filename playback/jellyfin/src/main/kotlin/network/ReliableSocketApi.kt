@@ -53,7 +53,7 @@ class ReliableSocketApi(
 ) : SocketApi {
 	private val connection = ReliableSocketConnection(api, factory)
 	override val state = connection.state
-	private data class Credentials(val generation: Long, val identity: List<Any?>?)
+	private data class Credentials(val generation: Long, val identity: SocketCredentials?)
 	private val credentials = MutableStateFlow(Credentials(0, credentials()))
 	private val subscriptions = mutableMapOf<Subscription, Int>()
 	private val policy = api.httpClientOptions.socketReconnectPolicy
@@ -64,7 +64,7 @@ class ReliableSocketApi(
 		try {
 			credentials.collectLatest { identity ->
 				connection.close()
-				if (identity.identity == null) return@collectLatest
+				val socketCredentials = identity.identity ?: return@collectLatest
 				policy.notifyUpdated()
 				coroutineScope {
 					// Register before connecting, and cancel the receiver with its credentials.
@@ -72,7 +72,7 @@ class ReliableSocketApi(
 						connection.messages.collect { send(ReceivedMessage(identity, it)) }
 					}
 					while (isActive) {
-						maintainConnection(this)
+						maintainConnection(this, socketCredentials)
 						policy.notifyDisconnected()
 						val retryDelay = policy.getReconnectDelay() ?: awaitCancellation()
 						delay(retryDelay)
@@ -92,9 +92,9 @@ class ReliableSocketApi(
 	}
 
 	@Suppress("TooGenericExceptionCaught") // A failed network attempt uses the SDK's reconnect policy.
-	private suspend fun maintainConnection(parentScope: CoroutineScope) {
+	private suspend fun maintainConnection(parentScope: CoroutineScope, credentials: SocketCredentials) {
 		try {
-			withTimeout(CONNECT_TIMEOUT_MILLIS) { connection.connect(parentScope) }
+			withTimeout(CONNECT_TIMEOUT_MILLIS) { connection.connect(parentScope, credentials) }
 			policy.notifyConnected()
 			synchronized(subscriptions) {
 				for (type in subscriptions.keys) connection.send(type.start())
@@ -140,10 +140,7 @@ class ReliableSocketApi(
 		}
 	}
 
-	private fun credentials(): List<Any?>? {
-		if (api.baseUrl == null || api.accessToken == null) return null
-		return listOf(api.baseUrl, api.accessToken, api.clientInfo, api.deviceInfo)
-	}
+	private fun credentials(): SocketCredentials? = SocketCredentials.from(api)
 
 	private enum class Subscription(val messageType: KClass<out OutboundWebSocketMessage>) {
 		SESSIONS(SessionsMessage::class),

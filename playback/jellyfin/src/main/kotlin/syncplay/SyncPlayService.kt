@@ -198,15 +198,17 @@ class SyncPlayService(
 
 	suspend fun createGroup(name: String) = operation("Unable to create a SyncPlay group. Check your SyncPlay permissions.") {
 		require(name.isNotBlank())
-		beginJoin()
-		val expectedGeneration = generation
+		val expectedGeneration = beginJoin()
+		// endSession() or leaveGroup() may have run while beginJoin() waited; never create a group for them.
+		if (!stillJoining(expectedGeneration)) return@operation
 		joiningRequestSent = true
 		val created = api.syncPlayApi.syncPlayCreateGroup(NewGroupRequestDto(name.trim())).content
 		if (expectedGeneration == generation && sessionIdentity == identity()) acceptGroup(created)
 	}
 
 	suspend fun joinGroup(id: UUID) = operation("Unable to join this SyncPlay group. It may have closed or access may be denied.") {
-		beginJoin()
+		val expectedGeneration = beginJoin()
+		if (!stillJoining(expectedGeneration)) return@operation
 		val result = requireNotNull(joinResult)
 		joiningRequestSent = true
 		api.syncPlayApi.syncPlayJoinGroup(JoinGroupRequestDto(id))
@@ -250,15 +252,21 @@ class SyncPlayService(
 		launchRequest { api.syncPlayApi.syncPlayQueue(QueueRequestDto(ids, GroupQueueMode.QUEUE)) }
 	}
 
-	private suspend fun beginJoin() {
+	/** Returns the generation this join belongs to; check it with [stillJoining] after any suspension. */
+	private suspend fun beginJoin(): Long {
 		if (group.value != null) api.syncPlayApi.syncPlayLeaveGroup()
 		reset(stopPlayback = false)
 		joining = true
 		joinResult = CompletableDeferred()
 		sessionIdentity = identity()
+		val joinGeneration = generation
 		withTimeout(JOIN_TIMEOUT_MILLIS) { api.webSocket.state.first { it is SocketApiState.Connected } }
 		measureTime()
+		return joinGeneration
 	}
+
+	private fun stillJoining(joinGeneration: Long) =
+		generation == joinGeneration && joining && sessionIdentity != null && sessionIdentity == identity()
 
 	private fun acceptGroup(info: GroupInfoDto) {
 		if (!joining && group.value?.groupId != info.groupId) return

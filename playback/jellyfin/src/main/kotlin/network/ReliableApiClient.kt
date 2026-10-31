@@ -24,12 +24,16 @@ class ReliableApiClient internal constructor(
 	override val deviceInfo get() = delegate.deviceInfo
 	override val httpClientOptions get() = delegate.httpClientOptions
 
-	private val socket = lazy { createSocketApi(this) }
+	// Socket credentials are read under this lock, so they never see a half-applied update().
+	private val credentialsLock = Any()
+	private val socket = lazy(credentialsLock) { createSocketApi(this) }
 	override val webSocket: SocketApi get() = socket.value
 
 	override fun update(baseUrl: String?, accessToken: String?, clientInfo: ClientInfo, deviceInfo: DeviceInfo) {
-		delegate.update(baseUrl, accessToken, clientInfo, deviceInfo)
-		if (socket.isInitialized()) socket.value.notifyApiClientUpdate()
+		synchronized(credentialsLock) {
+			delegate.update(baseUrl, accessToken, clientInfo, deviceInfo)
+			if (socket.isInitialized()) socket.value.notifyApiClientUpdate()
+		}
 	}
 
 	override suspend fun request(

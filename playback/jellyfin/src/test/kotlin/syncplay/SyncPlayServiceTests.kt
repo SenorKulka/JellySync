@@ -77,6 +77,21 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 class SyncPlayServiceTests : FunSpec({
+	test("ending the session while a create is still connecting never sends the stale create request") {
+		withService {
+			socketState.value = SocketApiState.Connecting
+			val creating = testScope.async { service.createGroup("Movie night") }
+			testScope.runCurrent()
+			service.endSession()
+			socketState.value = SocketApiState.Connected
+			testScope.runCurrent()
+			creating.await()
+			coVerify(exactly = 0) { syncApi.syncPlayCreateGroup(any()) }
+			service.group.value shouldBe null
+			service.active shouldBe false
+		}
+	}
+
 	test("a group queue prepares paused and reports the queue entry identifier when ready") {
 		withService {
 			service.createGroup("Movie night")
@@ -390,7 +405,7 @@ private class ServiceFixture(val testScope: TestScope) {
 	private val api = mockk<ApiClient>()
 	private val socket = mockk<SocketApi>(relaxed = true)
 	private val messages = MutableSharedFlow<OutboundWebSocketMessage>(extraBufferCapacity = 16)
-	private val socketState = MutableStateFlow<SocketApiState>(SocketApiState.Connected)
+	val socketState = MutableStateFlow<SocketApiState>(SocketApiState.Connected)
 	val backend = mockk<PlayerBackend>(relaxed = true)
 	val manager = mockk<PlaybackManager>(relaxed = true)
 	private val state = mockk<PlayerState>(relaxed = true)
